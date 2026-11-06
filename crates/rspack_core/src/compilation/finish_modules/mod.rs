@@ -27,6 +27,14 @@ impl PassExt for FinishModulesPhasePass {
       .incremental
       .passes_enabled(IncrementalPasses::BUILD_MODULE_GRAPH)
     {
+      if compilation
+        .incremental
+        .mutations_readable(IncrementalPasses::BUILD_MODULE_GRAPH)
+      {
+        compilation
+          .exports_info_artifact
+          .retain_reachable(compilation.build_module_graph_artifact.get_module_graph());
+      }
       compilation.exports_info_artifact.checkpoint();
     }
     Ok(())

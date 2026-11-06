@@ -1,8 +1,9 @@
 use rayon::prelude::*;
 use rspack_collections::IdentifierMap;
+use rustc_hash::FxHashSet;
 
 use crate::{
-  ArtifactExt, ExportsInfo, ExportsInfoData, ModuleIdentifier,
+  ArtifactExt, ExportsInfo, ExportsInfoData, ModuleGraph, ModuleIdentifier,
   incremental::{Incremental, IncrementalPasses},
   module_graph::rollback,
 };
@@ -95,6 +96,34 @@ impl ExportsInfoArtifact {
       .exports_info_map
       .get_mut(id)
       .expect("should have exports info")
+  }
+
+  /// Drops exports info that no module in `module_graph` can reach.
+  ///
+  /// A rebuilt module gets a new `ExportsInfo`, and nothing removes the old one,
+  /// so without this the map grows on every rebuild.
+  pub fn retain_reachable(&mut self, module_graph: &ModuleGraph) {
+    self
+      .module_exports_info
+      .retain(|module, _| module_graph.module_by_identifier(module).is_some());
+
+    let mut reachable =
+      FxHashSet::with_capacity_and_hasher(self.exports_info_map.len(), Default::default());
+    let mut stack: Vec<ExportsInfo> = self.module_exports_info.values().copied().collect();
+    while let Some(id) = stack.pop() {
+      if !reachable.insert(id) {
+        continue;
+      }
+      let Some(data) = self.exports_info_map.get(&id) else {
+        continue;
+      };
+      let export_infos = data
+        .exports()
+        .values()
+        .chain([data.other_exports_info(), data.side_effects_only_info()]);
+      stack.extend(export_infos.filter_map(|export_info| export_info.exports_info()));
+    }
+    self.exports_info_map.retain(|id, _| reachable.contains(id));
   }
 
   pub fn checkpoint(&mut self) {
